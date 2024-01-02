@@ -22,8 +22,49 @@ export class CA2AppStack extends cdk.Stack {
       publicReadAccess: false,
     });
 
+    // Integration infrastructure
+    const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    });
+
+    // Topic for new images
+    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
+      displayName: "New Image topic",
+    });
+
+    // Lambda functions
+    const processImageFn = new lambdanode.NodejsFunction(
+      this,
+      "ProcessImageFn",
+      {
+        // architecture: lambda.Architecture.ARM_64,
+        runtime: lambda.Runtime.NODEJS_18_X,
+        entry: `${__dirname}/../lambdas/processImage.ts`,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 128,
+      }
+    );
+
+    // Event triggers
+    imagesBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.SqsDestination(imageProcessQueue)
+    );
+
+    // Add a subscriber to the SNS topic
+    newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue));
+
+    const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
+      batchSize: 5,
+      maxBatchingWindow: cdk.Duration.seconds(10),
+    });
+
+    processImageFn.addEventSource(newImageEventSource);
+
+    // Permissions
+    imagesBucket.grantRead(processImageFn);
+
     // Output
-    
     new cdk.CfnOutput(this, "bucketName", {
       value: imagesBucket.bucketName,
     });
